@@ -1,48 +1,47 @@
-name: Publish Python Package
+name: Promote Python Package
 
 on:
-  workflow_run:
-    workflows: ["Build Python Package"]
-    types:
-      - completed
-    branches:
-      - main
+  workflow_dispatch:
+    inputs:
+      package_version:
+        description: 'Package version to promote (e.g., 0.0.1)'
+        required: true
+        type: string
 
 env:
   CLOUDSMITH_NAMESPACE: ${{ vars.CLOUDSMITH_NAMESPACE }}
-  CLOUDSMITH_REPOSITORY: "staging"
-  CLOUDSMITH_SERVICE_SLUG: ${{ vars.CLOUDSMITH_SERVICE_SLUG }}
+  CLOUDSMITH_STAGING_REPO: 'staging'
+  CLOUDSMITH_PRODUCTION_REPO: 'production'
+  CLOUDSMITH_API_KEY: ${{ secrets.CLOUDSMITH_API_KEY }}
+  PACKAGE_NAME: 'example_package'
 
 permissions:
-  contents: read
-  actions: read
+  id-token: write
 
 jobs:
-  publish:
+  promote:
     runs-on: ubuntu-latest
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
 
     steps:
-      - name: Download artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: python-package
-          path: dist
-          repository: ${{ github.repository }}
-          github-token: ${{ github.token }}
-          run-id: ${{ github.event.workflow_run.id }}
+      - name: Install Cloudsmith CLI
+        run: pip install cloudsmith-cli
 
-
-
-      - name: List directory contents
-        run: ls -la dist/
-        shell: bash
-
-      - name: Push package to Cloudsmith
+      - name: Get package identifier and promote
         run: |
-          if ! ls dist/*.tar.gz 1> /dev/null 2>&1; then
-            echo "No package found to upload"
+          PACKAGE_QUERY="filename:${PACKAGE_NAME}-${{ github.event.inputs.package_version }}.tar.gz"
+          echo "Searching for package with query: $PACKAGE_QUERY"
+
+          PACKAGE_DATA=$(cloudsmith list package ${{ env.CLOUDSMITH_NAMESPACE }}/${{ env.CLOUDSMITH_STAGING_REPO }} -q "$PACKAGE_QUERY" -F json)
+
+          IDENTIFIER=$(echo "$PACKAGE_DATA" | jq -r '.data[0].identifier_perm')
+
+          if [ -z "$IDENTIFIER" ] || [ "$IDENTIFIER" = "null" ]; then
+            echo "Failed to find package identifier"
             exit 1
           fi
-          cloudsmith push python ${{ env.CLOUDSMITH_NAMESPACE }}/${{ env.CLOUDSMITH_REPOSITORY }} dist/*.tar.gz --republish
-        shell: bash
+
+          echo "Found package identifier: $IDENTIFIER"
+
+          cloudsmith mv --yes \
+            ${{ env.CLOUDSMITH_NAMESPACE }}/${{ env.CLOUDSMITH_STAGING_REPO }}/$IDENTIFIER \
+            ${{ env.CLOUDSMITH_NAMESPACE }}/${{ env.CLOUDSMITH_PRODUCTION_REPO }}

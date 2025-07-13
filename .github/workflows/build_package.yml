@@ -16,9 +16,7 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    outputs:
-      artifact_name: python-package
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
